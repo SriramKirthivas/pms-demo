@@ -25,6 +25,11 @@ def service_url(db_name: str) -> str:
         if base.rstrip("/").endswith(".db"):
             return base.rsplit("/", 1)[0] + f"/{db_name}.db"
         return base
+    if os.getenv("DB_AUTOCREATE", "1") != "1":
+        # Managed Postgres (Render/RDS): the provider generated the database
+        # name (it may not equal SERVICE_DB), so use exactly the DB named in
+        # DATABASE_URL rather than rewriting the last path segment.
+        return base
     return base.rsplit("/", 1)[0] + f"/{db_name}"
 
 
