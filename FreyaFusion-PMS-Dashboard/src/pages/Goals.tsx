@@ -254,17 +254,11 @@ export default function Goals() {
       .catch(() => setSheet(null))
       .finally(() => setLoading(false));
   };
-  useEffect(() => {
-    load(owner);
-    loadLocks();
-    api.get<CompanyGoalLite[]>("/company-goals").then(setCompanyGoals).catch(() => setCompanyGoals([]));
-    // NOTE: this feeds the picker below /goals?owner= (the legacy ad-hoc goal
-    // sheet, not yet mapped to pm-goal — see pmGoal/GoalLifecyclePanel for the
-    // real cascade/acceptance flow). The picker itself now sources real
-    // people so it isn't empty; the sheet load for another owner may still
-    // 404 until that legacy flow is replaced.
-    if (canManage) pmGoal.get<PersonLite[]>("/people").then(setPeople).catch(() => setPeople([]));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // The legacy Goal Sheet view is no longer rendered (see the render block),
+  // so its data no longer loads on mount — this avoids failed requests to the
+  // retired :8000 backend. The pm-goal Lifecycle flow loads its own data
+  // inside GoalLifecyclePanel. The load()/loadLocks() helpers remain defined
+  // for the dormant sheet JSX below but are never invoked.
 
   const lockOf = (period: string) => locks.find((l) => l.period === period);
 
@@ -390,8 +384,11 @@ export default function Goals() {
 
   return (
     <AppLayout pageTitle="Goal Setting" breadcrumb="Performance">
-      {/* Legacy "Goal Sheet" tab retired — the pm-goal lifecycle view is the source of truth. */}
-      {topView === "lifecycle" && <GoalLifecyclePanel />}
+      {/* The Goals page is the pm-goal Lifecycle flow. The old "Goal Sheet"
+          view (below, dormant) read from the retired :8000 mock backend that
+          was split into the pm-* services, so it can't load here — the tab
+          switcher was removed and topView stays "lifecycle". */}
+      <GoalLifecyclePanel />
 
       {topView === "sheet" && (<>
       {/* Sheet header */}

@@ -59,6 +59,15 @@ const STATUS_STYLE: Record<string, string> = {
 const acceptColor = (s: string) =>
   s === "ACCEPTED" ? "text-green-600" : s === "REJECTED" ? "text-red-600" : "text-gray-400";
 
+// Numeric ratings entered against an ACTIVE assignment (pm-eval). The self
+// stream is the owner's, the reviewer stream is the manager's; these roll up
+// into the IPF scorecard when the period is locked.
+const RATING_OPTIONS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+interface CurrentRating {
+  self: { rating: number } | null;
+  reviewer: { rating: number } | null;
+}
+
 export default function GoalLifecyclePanel() {
   const { role, user } = useAuth();
   const isSetter = role === "manager" || role === "admin";
@@ -90,6 +99,9 @@ export default function GoalLifecyclePanel() {
   const [auditFor, setAuditFor] = useState<Assignment | null>(null);
   const [auditRows, setAuditRows] = useState<AuditRow[]>([]);
 
+  // Latest self/reviewer rating per assignment (pm-eval GET /evaluations/current).
+  const [ratings, setRatings] = useState<Record<string, CurrentRating>>({});
+
   // Quarterly check-in notes (pm-eval) — free-text progress notes per
   // employee/period, separate from numeric ratings.
   const [checkinEmployee, setCheckinEmployee] = useState("");
@@ -118,9 +130,29 @@ export default function GoalLifecyclePanel() {
       ]);
       setFramework(fw);
       setGoals(gsPage.list ?? []);
-      setAssignments(asg.filter((a) => a.fiscalYear === year));
+      const mine = asg.filter((a) => a.fiscalYear === year);
+      setAssignments(mine);
+      // Pull the latest self/reviewer rating for each assignment so the row can
+      // show current values (pm-eval is the source of truth for ratings).
+      const pairs = await Promise.all(mine.map((a) =>
+        pmEval.get<CurrentRating>(`/evaluations/current?assignmentId=${encodeURIComponent(a.id)}`)
+          .then((c) => [a.id, { self: c.self, reviewer: c.reviewer }] as const)
+          .catch(() => [a.id, { self: null, reviewer: null }] as const),
+      ));
+      setRatings(Object.fromEntries(pairs));
     } catch (err) {
       toast.error("Could not load pm-goal data", { description: (err as Error).message });
+    }
+  };
+
+  const submitRating = async (a: Assignment, source: "self" | "reviewer", rating: number) => {
+    const path = source === "self" ? "/evaluations/self" : "/evaluations/reviewer";
+    try {
+      await pmEval.post(path, { assignmentId: a.id, employeeId: a.ownerId, rating });
+      toast.success(`${source === "self" ? "Self" : "Reviewer"} rating saved (${rating.toFixed(1)})`);
+      loadAll(fy);
+    } catch (err) {
+      toast.error("Could not save rating", { description: (err as Error).message });
     }
   };
   useEffect(() => {
@@ -459,6 +491,36 @@ export default function GoalLifecyclePanel() {
                         className="p-1 rounded hover:bg-[#eef0f4] text-gray-400"><History size={14} /></button>
                     </div>
                   </div>
+
+                  {/* Ratings — self (owner) and reviewer (manager) streams that
+                      roll up into the IPF scorecard. Editable only while ACTIVE. */}
+                  {a.status !== "PENDING_ACCEPTANCE" && a.status !== "CHANGE_REQUESTED" && (
+                    <div className="mt-2 pt-2 border-t border-[#f3f4f6] flex items-center gap-3 flex-wrap text-[12px]">
+                      <span className="text-gray-400">Ratings</span>
+                      <span>self <b className="text-[#16203b]">{ratings[a.id]?.self?.rating ?? "—"}</b></span>
+                      <span>mgr <b className="text-[#16203b]">{ratings[a.id]?.reviewer?.rating ?? "—"}</b></span>
+                      {a.status === "ACTIVE" && own && (
+                        <label className="flex items-center gap-1.5 ml-auto">
+                          <span className="text-gray-400">Set your rating</span>
+                          <select defaultValue="" onChange={(e) => { if (e.target.value) submitRating(a, "self", parseFloat(e.target.value)); }}
+                            className="h-7 rounded-[5px] border border-input bg-background text-[12px] px-1.5">
+                            <option value="" disabled>—</option>
+                            {RATING_OPTIONS.map((o) => <option key={o} value={o}>{o.toFixed(1)}</option>)}
+                          </select>
+                        </label>
+                      )}
+                      {a.status === "ACTIVE" && isSetter && !own && (
+                        <label className="flex items-center gap-1.5 ml-auto">
+                          <span className="text-gray-400">Set reviewer rating</span>
+                          <select defaultValue="" onChange={(e) => { if (e.target.value) submitRating(a, "reviewer", parseFloat(e.target.value)); }}
+                            className="h-7 rounded-[5px] border border-input bg-background text-[12px] px-1.5">
+                            <option value="" disabled>—</option>
+                            {RATING_OPTIONS.map((o) => <option key={o} value={o}>{o.toFixed(1)}</option>)}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

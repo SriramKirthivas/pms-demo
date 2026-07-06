@@ -23,6 +23,17 @@ envVarGroups:
       # skip the bootstrap and just use the DB named in DATABASE_URL.
       - key: DB_AUTOCREATE
         value: "0"
+      # Sibling service origins for best-effort cross-service calls (pm-eval
+      # verifies assignments against pm-goal before accepting a rating; all
+      # services emit events to pm-notify). Public onrender.com URLs.
+      - key: GOAL_URL
+        value: https://pms-goal.onrender.com
+      - key: EVAL_URL
+        value: https://pms-eval.onrender.com
+      - key: SCORE_URL
+        value: https://pms-score.onrender.com
+      - key: NOTIFY_URL
+        value: https://pms-notify.onrender.com
 
 databases:
   - name: pms-db
