@@ -121,7 +121,7 @@ def main():
                               json={"employeeIds": NAMES, "reviewerIds": ["Rachel Adams"]}))
             for aid in res.get("created", []):
                 a = data(c.get(f"{GOAL}/api/pm-goal/assignments/{aid}", headers=hdr(A)))
-                emp = a["employeeId"]
+                emp = a.get("ownerId") or a.get("employeeId")
                 first_aid.setdefault(emp, aid)
                 cp = A if emp != "Nina Patel" else M
                 data(c.post(f"{GOAL}/api/pm-goal/assignments/{aid}/accept", headers=hdr(tok('employee', emp))))
