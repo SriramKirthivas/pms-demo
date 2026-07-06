@@ -1,0 +1,180 @@
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600&family=Poppins:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* shadcn/ui HSL tokens — mapped to the FreyaFusion palette */
+    --background: 210 17% 98%;         /* #f8f9fa ff-gray-100 canvas */
+    --foreground: 210 11% 15%;         /* #212529 ff-gray-900 ink */
+    --card: 0 0% 100%;
+    --card-foreground: 210 11% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 11% 15%;
+    --primary: 216 100% 40%;           /* #0052CC ff-primary-base */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 16% 93%;
+    --secondary-foreground: 210 11% 15%;
+    --muted: 210 16% 96%;
+    --muted-foreground: 210 9% 31%;    /* #495057 ff-gray-700 */
+    --accent: 216 100% 40%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 354 70% 54%;        /* #DC3545 ff-danger */
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 80%;                /* #cccccc ff-black-700 */
+    --input: 0 0% 80%;
+    --ring: 216 100% 40%;
+    --chart-1: 216 100% 40%;
+    --chart-2: 134 61% 41%;
+    --chart-3: 25 98% 54%;
+    --chart-4: 354 70% 54%;
+    --chart-5: 262 52% 47%;
+    --radius: 0.25rem;                 /* 4px standard (spec) */
+    /* Sidebar (light) */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 210 11% 15%;
+    --sidebar-primary: 216 100% 40%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 216 100% 96%;
+    --sidebar-accent-foreground: 216 100% 40%;
+    --sidebar-border: 0 0% 87%;
+    --sidebar-ring: 216 100% 40%;
+
+    /* ── FreyaFusion design tokens (--ff-*) ── */
+    /* Brand */
+    --ff-primary-base: #0052CC;
+    --ff-primary-lightest: #e6eefa;
+    --ff-primary-lighter: #b3ccf0;
+    --ff-primary-light: #6699e0;
+    --ff-primary-darker: #003d99;
+    /* Semantic */
+    --ff-danger-base: #DC3545;
+    --ff-success-base: #28A745;
+    --ff-warning-base: #FD7E14;
+    --ff-info-base: #cff4fc;
+    /* Neutral (black → white) */
+    --ff-black-base: #000000;
+    --ff-black-200: #333333;
+    --ff-black-400: #666666;
+    --ff-black-500: #9a9a9a;
+    --ff-black-600: #aaaaaa;
+    --ff-black-700: #cccccc;
+    --ff-black-800: #dddddd;
+    --ff-black-900: #eeeeee;
+    --ff-black-1000: #fafafa;
+    /* Gray */
+    --ff-gray-100: #f8f9fa;
+    --ff-gray-200: #e9ecef;
+    --ff-gray-300: #dee2e6;
+    --ff-gray-500: #adb5bd;
+    --ff-gray-700: #495057;
+    --ff-gray-900: #212529;
+    /* Typography */
+    --ff-font-size-heading-level1: 22px;
+    --ff-font-size-heading-level2: 20px;
+    --ff-font-size-heading-level3: 18px;
+    --ff-font-size-heading-level4: 16px;
+    --ff-font-size-heading-level5: 14px;
+    --ff-font-size-body-base: 14px;
+    --ff-font-size-body-medium: 13px;
+    --ff-font-size-body-small: 12px;
+    --ff-font-size-body-verysmall: 11px;
+    --ff-font-weight-400: 400;
+    --ff-font-weight-500: 500;
+    --ff-font-weight-600: 600;
+    --ff-font-weight-700: 700;
+    --ff-font-lineheight-base: 1.5;
+    /* Spacing scale */
+    --ff-space-nano: 2px;
+    --ff-space-micro: 4px;
+    --ff-space-condensed: 8px;
+    --ff-space-compact: 12px;
+    --ff-space-default: 16px;
+    --ff-space-littlecomfort: 20px;
+    --ff-space-comfortable: 24px;
+    --ff-space-spacious: 32px;
+    /* Icon sizes */
+    --ff-icon-size-base: 16px;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    font-family: 'Open Sans', system-ui, -apple-system, sans-serif;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Open Sans', system-ui, -apple-system, sans-serif;
+    font-size: var(--ff-font-size-body-base);
+    line-height: var(--ff-font-lineheight-base);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* Heading accent font per FreyaFusion spec */
+  h1, h2, h3, h4, .ff-heading {
+    font-family: 'Poppins', 'Open Sans', sans-serif;
+  }
+
+  /* Thin custom scrollbars (spec) */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #F2F6F9; border-radius: 5px; }
+  ::-webkit-scrollbar-track:hover { background: #EEEEEE; }
+  ::-webkit-scrollbar-thumb { background: #E7EAED; border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: #C3C6C8; }
+}
+
+@layer utilities {
+  /* Cards — 6px radius per spec, soft shadow */
+  .ff-card {
+    @apply bg-white border border-[#e9ecef] rounded-[6px];
+    box-shadow: 0 1px 2px rgba(33, 37, 41, 0.04), 0 1px 3px rgba(33, 37, 41, 0.04);
+  }
+  .ff-card-hover {
+    transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+  }
+  .ff-card-hover:hover {
+    box-shadow: 0 6px 18px rgba(0, 82, 204, 0.10), 0 2px 6px rgba(33, 37, 41, 0.05);
+    border-color: var(--ff-primary-lighter);
+    transform: translateY(-2px);
+  }
+
+  /* Progress */
+  .ff-progress {
+    height: 5px;
+    @apply rounded-full overflow-hidden bg-[#e9ecef];
+  }
+  .ff-progress-fill {
+    height: 5px;
+    @apply rounded-full;
+    background: linear-gradient(90deg, #0052CC 0%, #2a6fe0 100%);
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .ff-label {
+    @apply text-[10px] uppercase tracking-widest font-semibold text-gray-400;
+    letter-spacing: 0.09em;
+  }
+
+  /* Sidebar nav — light theme, 2px primary left border on active (spec) */
+  .ff-nav-item {
+    @apply relative flex items-center gap-2.5 px-3 py-2 rounded-[4px] text-[13px] font-medium text-gray-600 hover:text-[#0052CC] hover:bg-[#f1f5fc] cursor-pointer transition-colors;
+  }
+  .ff-nav-item.active {
+    @apply text-[#0052CC] bg-[#e6eefa] font-semibold;
+  }
+  .ff-nav-item.active::before {
+    content: "";
+    @apply absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[2px] rounded-r-full bg-[#0052CC];
+  }
+
+  .table-row-hover {
+    @apply hover:bg-[#f8f9fa] transition-colors duration-100;
+  }
+
+  .ff-chip {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#e6eefa] text-[#0052CC];
+  }
+}

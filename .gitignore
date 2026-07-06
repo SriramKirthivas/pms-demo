@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.db
+
+# Node / Vite
+node_modules/
+dist/
+
+# Local run artifacts
+.logs/
+*.log
+
+# OS
+.DS_Store

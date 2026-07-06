@@ -1,0 +1,116 @@
+# Render Blueprint — FreyaFusion PMS demo.
+# Deploys the 4 pm-* FastAPI services + the legacy /api shim, all sharing one
+# free Postgres (their tables are uniquely prefixed, so no collisions).
+#
+# HOW TO USE
+#   1. Push this whole PMS-ADO folder to a GitHub repo.
+#   2. Render Dashboard -> New + -> Blueprint -> select the repo.
+#   3. Render reads this file and creates everything. First deploy ~5-8 min.
+#   4. Copy each service's public URL into Vercel (see DEPLOY.md).
+#
+# NOTE: free web services sleep after 15 min idle (~50s cold start on the next
+# request). Hit each /api/health once a minute before your demo to warm them.
+
+envVarGroups:
+  - name: pms-shared
+    envVars:
+      # MUST match the frontend's JWT signing secret. The browser dev-login
+      # (src/lib/devAuth.ts) signs with VITE_DEV_JWT_SECRET, default "dev-secret".
+      # Keep these equal or tokens will be rejected with 401.
+      - key: SECRET_KEY
+        value: dev-secret
+      # Managed Postgres already exists and the app user can't CREATE DATABASE;
+      # skip the bootstrap and just use the DB named in DATABASE_URL.
+      - key: DB_AUTOCREATE
+        value: "0"
+
+databases:
+  - name: pms-db
+    plan: free
+    databaseName: pms
+    user: pms
+
+services:
+  # ---- pm-goal ----
+  - type: web
+    name: pms-goal
+    runtime: docker
+    plan: free
+    rootDir: FreyaFusion-PMS-Goal
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - fromGroup: pms-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pms-db
+          property: connectionString
+      - key: SERVICE_DB
+        value: pms
+
+  # ---- pm-eval ----
+  - type: web
+    name: pms-eval
+    runtime: docker
+    plan: free
+    rootDir: FreyaFusion-PMS-Eval
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - fromGroup: pms-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pms-db
+          property: connectionString
+      - key: SERVICE_DB
+        value: pms
+
+  # ---- pm-score ----
+  - type: web
+    name: pms-score
+    runtime: docker
+    plan: free
+    rootDir: FreyaFusion-PMS-Score
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - fromGroup: pms-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pms-db
+          property: connectionString
+      - key: SERVICE_DB
+        value: pms
+
+  # ---- pm-notify ----
+  - type: web
+    name: pms-notify
+    runtime: docker
+    plan: free
+    rootDir: FreyaFusion-PMS-Notify
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - fromGroup: pms-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pms-db
+          property: connectionString
+      - key: SERVICE_DB
+        value: pms
+
+  # ---- legacy /api shim (People, Competencies, Development, Settings, audit) ----
+  - type: web
+    name: pms-legacy-shim
+    runtime: docker
+    plan: free
+    rootDir: pms-legacy-shim
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - fromGroup: pms-shared
