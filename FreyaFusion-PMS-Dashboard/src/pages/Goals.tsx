@@ -390,16 +390,7 @@ export default function Goals() {
 
   return (
     <AppLayout pageTitle="Goal Setting" breadcrumb="Performance">
-      {/* Top-level tabs: the goal sheet (ratings/locks) vs the spec goal lifecycle */}
-      <div className="flex gap-1 mb-4 bg-white border border-[#ebedf2] rounded-[8px] p-1 w-fit">
-        {([["lifecycle", "Lifecycle"], ["sheet", "Goal Sheet (legacy)"]] as const).map(([k, lbl]) => (
-          <button key={k} onClick={() => setTopView(k)}
-            className={`px-4 py-1.5 rounded-[5px] text-[12.5px] font-medium transition-colors ${topView === k ? "bg-[#0052cc] text-white" : "text-gray-500 hover:text-[#16203b]"}`}>
-            {lbl}
-          </button>
-        ))}
-      </div>
-
+      {/* Legacy "Goal Sheet" tab retired — the pm-goal lifecycle view is the source of truth. */}
       {topView === "lifecycle" && <GoalLifecyclePanel />}
 
       {topView === "sheet" && (<>
