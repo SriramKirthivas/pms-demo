@@ -35,6 +35,7 @@ interface Employee {
   avatar: string;
   performance: PerformanceLevel;
   potential: PotentialLevel;
+  potentialSource: string;  // "AUTO" (from feedback) | "MANUAL" (calibrated)
   dept: string;
   country: string;
   ipf: number | null;       // manager Final IPF (drives performance)
@@ -125,6 +126,13 @@ const CURRENT_FY = "FY26-27";
 
 // pm-score GET /nine-box row — field names are read defensively since the
 // service may key employee identity/display fields slightly differently.
+interface NineBoxNested {
+  performanceLevel?: PerformanceLevel;
+  potentialLevel?: PotentialLevel;
+  potentialSource?: string;
+  boxLabel?: string;
+  department?: string;
+}
 interface NineBoxRow {
   employeeId: string;
   name?: string;
@@ -135,29 +143,36 @@ interface NineBoxRow {
   department?: string;
   dept?: string;
   country?: string;
+  // GET /nine-box returns scorecard rows with the placement NESTED under
+  // `nineBox`; older/flat shapes are still read as a fallback.
+  nineBox?: NineBoxNested | null;
   performanceLevel?: PerformanceLevel;
   performance?: PerformanceLevel;
   potentialLevel?: PotentialLevel;
   potential?: PotentialLevel;
+  potentialSource?: string;
   boxLabel?: string;
   ipf?: number | null;
   managerFinalIPF?: number | null;
   ipfBand?: string | null;
+  bandManager?: string | null;
   band?: string | null;
 }
 
 function mapNineBoxRow(r: NineBoxRow): Employee {
+  const nb = r.nineBox ?? {};
   return {
     id: r.employeeId,
     name: r.name ?? r.employeeName ?? r.employeeId,
     role: r.role ?? r.title ?? "",
     avatar: r.avatar ?? FALLBACK_AVATAR,
-    performance: (r.performanceLevel ?? r.performance ?? 2) as PerformanceLevel,
-    potential: (r.potentialLevel ?? r.potential ?? 2) as PotentialLevel,
-    dept: r.department ?? r.dept ?? "General",
+    performance: (nb.performanceLevel ?? r.performanceLevel ?? r.performance ?? 2) as PerformanceLevel,
+    potential: (nb.potentialLevel ?? r.potentialLevel ?? r.potential ?? 2) as PotentialLevel,
+    potentialSource: nb.potentialSource ?? r.potentialSource ?? "AUTO",
+    dept: nb.department ?? r.department ?? r.dept ?? "General",
     country: r.country ?? "",
     ipf: r.ipf ?? r.managerFinalIPF ?? null,
-    ipfBand: r.ipfBand ?? r.band ?? null,
+    ipfBand: r.ipfBand ?? r.bandManager ?? r.band ?? null,
   };
 }
 
@@ -283,7 +298,7 @@ export default function Talent() {
         fiscalYear: CURRENT_FY,
         potentialLevel: editPotential,
       });
-      const updated: Employee = { ...selected, potential: editPotential as PotentialLevel };
+      const updated: Employee = { ...selected, potential: editPotential as PotentialLevel, potentialSource: "MANUAL" };
       setEmployees((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
       setSelected(updated);
       toast.success("Potential updated", {
@@ -519,6 +534,9 @@ export default function Talent() {
                     ) : (
                       <p className="text-[15px] font-bold text-[#0f1b3d] mt-0.5">{potLabels[selected.potential]}</p>
                     )}
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      {selected.potentialSource === "MANUAL" ? "calibrated (manual)" : "auto from feedback"}
+                    </p>
                   </div>
                 </div>
                 <p className="text-[12px] text-gray-500">

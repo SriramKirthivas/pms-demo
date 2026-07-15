@@ -92,7 +92,10 @@ class NineBox(URFMixin, Base):
     employee_id: Mapped[str] = mapped_column(String, index=True)
     fiscal_year: Mapped[str] = mapped_column(String, index=True)
     performance_level: Mapped[int] = mapped_column(Integer, default=2)  # from IPF band
-    potential_level: Mapped[int] = mapped_column(Integer, default=2)  # manager-set
+    potential_level: Mapped[int] = mapped_column(Integer, default=2)  # auto from feedback, or manager-set
+    # "AUTO" = potential derived from continuous feedback on compute; "MANUAL" =
+    # a manager/HR placed or calibrated it, so auto must not overwrite it.
+    potential_source: Mapped[str] = mapped_column(String, default="AUTO")
     box_label: Mapped[str] = mapped_column(String, default="")
     department: Mapped[str] = mapped_column(String, default="", index=True)
 

@@ -1,0 +1,19 @@
+# pm-eval — dev profile. Loaded when APP_ENV=dev (analogue of
+# SPRING_PROFILES_ACTIVE). Secret VALUES are fetched from AWS Secrets Manager by
+# the NAMES below (enable-aws-secrets) — nothing sensitive as an env var.
+# PORT stays a Dockerfile default (8082 for pm-eval).
+
+INTERNAL_ENFORCE: "1"
+INTERNAL_TIMEOUT: "5"
+AWS_REGION: "us-east-1"
+
+# --- AWS Secrets Manager (values fetched at startup) ---
+ENABLE_AWS_SECRETS: "true"
+DB_SECRET_NAME: "ff-pms-devsecops-db-secrets"
+APP_SECRET_NAME: "ff-pms-devsecops-common-secrets"
+
+# --- Internal service-to-service base URLs (dev internal ALB) ---
+GOAL_URL: "http://pm-goal:8081"
+EVAL_URL: "http://pm-eval:8082"
+SCORE_URL: "http://pm-score:8083"
+NOTIFY_URL: "http://pm-notify:8084"

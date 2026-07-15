@@ -362,12 +362,19 @@ def compute(db: Session, req: schemas.ComputeRequest, user: CurrentUser) -> IPFS
         result.get("selfBreakdown", []), result.get("managerBreakdown", []), user,
     )
 
-    # Auto-set the 9-box performance axis from the band.
+    # Auto-place on the 9-box: performance axis from the IPF band, potential
+    # axis from continuous feedback — unless a manager/HR has manually placed
+    # this person (potential_source == "MANUAL"), which auto must not override.
     nb = _nine_box(db, req.employeeId, req.fiscalYear)
     if nb is None:
         nb = NineBox(employee_id=req.employeeId, fiscal_year=req.fiscalYear, create_user=user.name)
         db.add(nb)
     nb.performance_level = result["performanceLevel"]
+    if (nb.potential_source or "AUTO") != "MANUAL":
+        auto_potential = _potential_from_feedback(_fetch_feedback(req.employeeId, req.fiscalYear))
+        if auto_potential is not None:
+            nb.potential_level = auto_potential
+            nb.potential_source = "AUTO"
     nb.box_label = BOX_LABELS.get((nb.performance_level, nb.potential_level), "")
     db.commit()
     db.refresh(sc)
@@ -392,6 +399,9 @@ def place_nine_box(db: Session, req: schemas.NineBoxRequest, user: CurrentUser) 
         db.add(nb)
     nb.performance_level = perf
     nb.potential_level = max(1, min(3, req.potentialLevel))
+    # A manager explicitly placed the potential axis — pin it so the
+    # feedback-driven auto-placement on future computes won't overwrite it.
+    nb.potential_source = "MANUAL"
     nb.box_label = BOX_LABELS.get((nb.performance_level, nb.potential_level), "")
     if req.department:
         nb.department = req.department
@@ -494,6 +504,7 @@ def nine_box_out(nb: NineBox) -> dict:
     return {
         "employeeId": nb.employee_id, "fiscalYear": nb.fiscal_year,
         "performanceLevel": nb.performance_level, "potentialLevel": nb.potential_level,
+        "potentialSource": nb.potential_source or "AUTO",
         "boxLabel": nb.box_label, "department": nb.department,
     }
 
@@ -513,6 +524,32 @@ def _fetch_feedback(employee_id: str, fiscal_year: str) -> dict:
         "eval", "/api/pm-eval/system/feedback",
         {"aboutEmployeeId": employee_id, "fiscalYear": fiscal_year},
     ) or {}
+
+
+def _potential_from_feedback(grouped: dict) -> int | None:
+    """Derive the 9-box potential axis (1=Low, 2=Medium, 3=High) from continuous
+    feedback grouped by category. STRETCH (growth/stretch signals) weighs
+    double and MOTIVATION/ATTITUDE/COMMUNICATION add positively; IMPROVEMENT
+    (development needed) pulls it down; GENERAL is neutral. Returns None when
+    there is no feedback at all, so auto-placement leaves the default/manual
+    value untouched rather than inventing a signal."""
+    counts = {cat: len(items or []) for cat, items in (grouped or {}).items()}
+    total = sum(counts.values())
+    if total == 0:
+        return None
+    positive = (
+        counts.get("STRETCH", 0) * 2
+        + counts.get("MOTIVATION", 0)
+        + counts.get("ATTITUDE", 0)
+        + counts.get("COMMUNICATION", 0)
+    )
+    negative = counts.get("IMPROVEMENT", 0)
+    score = positive - negative
+    if score >= 3:
+        return 3
+    if score <= 0:
+        return 1
+    return 2
 
 
 def build_dev_plan(db: Session, req: schemas.DevPlanBuildRequest, user: CurrentUser) -> DevelopmentPlan:

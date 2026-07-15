@@ -67,12 +67,16 @@ def test_bilateral_acceptance_activates(client):
     g = client.post("/api/pm-goal/goals",
                     json={"fiscalYear": "FY40", "pillar": "TEAM_GOAL", "measure": "B", "defaultWeight": 4},
                     headers=auth(a)).json()["data"]
-    aid = client.post(f"/api/pm-goal/goals/{g['id']}/cascade",
-                      json={"employeeIds": ["David Chen"]}, headers=auth(a)).json()["data"]["created"][0]
+    cascade = client.post(f"/api/pm-goal/goals/{g['id']}/cascade",
+                          json={"employeeIds": ["David Chen"]}, headers=auth(a)).json()["data"]
+    aid = cascade["created"][0]
+    # Manager auto-accepts on cascade; only the employee's acceptance is pending.
+    a0 = cascade["assignments"][0]
+    assert a0["managerAcceptance"] == "ACCEPTED" and a0["employeeAcceptance"] == "PENDING"
+    assert a0["status"] == "PENDING_ACCEPTANCE"
+    # The employee's acceptance is the final one needed -> goal goes ACTIVE.
     r1 = client.post(f"/api/pm-goal/assignments/{aid}/accept", headers=auth(e)).json()["data"]
-    assert r1["status"] == "PENDING_ACCEPTANCE"
-    r2 = client.post(f"/api/pm-goal/assignments/{aid}/accept", headers=auth(a)).json()["data"]
-    assert r2["status"] == "ACTIVE" and r2["isActive"] is True
+    assert r1["status"] == "ACTIVE" and r1["isActive"] is True
     actions = [t["action"] for t in client.get(f"/api/pm-goal/assignments/{aid}/audit", headers=auth(a)).json()["data"]]
     assert "CREATED" in actions and "CASCADED" in actions and actions.count("ACCEPTED") >= 2
 
@@ -505,8 +509,10 @@ def test_export_goal_sheet_roundtrip(client):
     wb = load_workbook(io.BytesIO(r.content))
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
-    assert rows[0][0] == "measure"
-    assert any(row[0] == "A" for row in rows[1:])
+    # Granular report format (per the meeting ask): Employee/Manager/.../ratings.
+    assert rows[0][0] == "Employee"
+    goal_col = rows[0].index("Goal")
+    assert any(row[goal_col] == "A" for row in rows[1:])
 
 
 # --- TC-G-24: Employee directory (UAM stub) + access scoping ---

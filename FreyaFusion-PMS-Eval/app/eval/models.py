@@ -47,6 +47,9 @@ class ContinuousFeedback(URFMixin, Base):
     category: Mapped[str] = mapped_column(String, index=True)
     text: Mapped[str] = mapped_column(String, default="")
     fiscal_year: Mapped[str] = mapped_column(String, default="", index=True)
+    # Optional link to a specific goal assignment. Set = feedback scoped to a
+    # goal in progress; empty = general continuous feedback about the person.
+    assignment_id: Mapped[str] = mapped_column(String, default="", index=True)
     at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

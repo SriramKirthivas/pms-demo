@@ -8,6 +8,11 @@ class FrameworkCreate(BaseModel):
     activeCadences: list[str] = ["QUARTERLY", "ANNUAL"]
     teamWeightPct: int = 60
     individualWeightPct: int = 40
+    # First month of the fiscal year (1=Jan … 12=Dec); default April.
+    startMonth: int = 4
+    # Re-send the "cycle is open" push-out notice to everyone even on a
+    # reconfigure (a first-time configure always announces).
+    announce: bool = False
 
 
 class PeriodOut(BaseModel):
@@ -25,6 +30,8 @@ class FrameworkOut(BaseModel):
     activeCadences: list[str]
     teamWeightPct: int
     individualWeightPct: int
+    startMonth: int
+    fyWindow: str
     periods: list[PeriodOut]
 
 

@@ -9,6 +9,10 @@ from fastapi.responses import JSONResponse
 
 os.environ.setdefault("SERVICE_DB", "pm_eval")
 
+# Load the APP_ENV profile (config/{APP_ENV}.yml) before config-reading imports.
+from .common.config import load_config  # noqa: E402
+load_config()
+
 from .common.db import init  # noqa: E402
 from .common.envelope import ApiError  # noqa: E402
 from .eval import models  # noqa: E402,F401  (register tables before init)

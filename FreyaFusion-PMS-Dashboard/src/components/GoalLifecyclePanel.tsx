@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Settings2, Plus, GitBranch, Check, X, Pencil, Clock, History, Lock, Target, Crosshair,
-  NotebookPen, CalendarClock, Upload, Download,
+  NotebookPen, CalendarClock, Upload, Download, Star, MessageSquare, Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -15,11 +15,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/AuthContext";
 import { pmGoal, pmEval, pmGoalUploadFile, pmGoalDownloadFile } from "@/lib/pmApi";
+import GoalFlowGuide from "@/components/GoalFlowGuide";
 
 interface Period { id: string; code: string; cadence: string; label: string; window: string; locked: boolean; }
 interface Framework {
   id: string; fiscalYear: string; activeCadences: string[];
-  teamWeightPct: number; individualWeightPct: number; periods: Period[];
+  teamWeightPct: number; individualWeightPct: number;
+  startMonth?: number; fyWindow?: string; periods: Period[];
 }
 interface Goal {
   id: string; fiscalYear: string; pillar: string; cadence: string; goalType: string;
@@ -56,7 +58,7 @@ const STATUS_STYLE: Record<string, string> = {
   LOCKED: "bg-gray-200 text-gray-600",
   CLOSED: "bg-gray-100 text-gray-500",
 };
-const acceptColor = (s: string) =>
+const accColor = (s: string) =>
   s === "ACCEPTED" ? "text-green-600" : s === "REJECTED" ? "text-red-600" : "text-gray-400";
 
 // Numeric ratings entered against an ACTIVE assignment (pm-eval). The self
@@ -64,9 +66,32 @@ const acceptColor = (s: string) =>
 // into the IPF scorecard when the period is locked.
 const RATING_OPTIONS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 interface CurrentRating {
-  self: { rating: number } | null;
-  reviewer: { rating: number } | null;
+  self: { rating: number; comment?: string } | null;
+  reviewer: { rating: number; comment?: string } | null;
 }
+
+// Selectable fiscal years (Apr–Mar). Kept as a fixed list since there's no
+// "list all fiscal years" endpoint; covers recent past through near future.
+const FISCAL_YEARS = ["FY24-25", "FY25-26", "FY26-27", "FY27-28", "FY28-29", "FY29-30"];
+
+// Goal-scoped feedback categories (pm-eval vocabulary). STRETCH feeds the
+// 9-box potential axis; kept identical to the continuous-feedback page.
+const FEEDBACK_CATEGORIES = [
+  { key: "MOTIVATION", label: "Motivation / Praise" },
+  { key: "STRETCH", label: "Stretch / Growth" },
+  { key: "ATTITUDE", label: "Attitude" },
+  { key: "COMMUNICATION", label: "Communication" },
+  { key: "IMPROVEMENT", label: "Area to improve" },
+  { key: "GENERAL", label: "General" },
+];
+interface GoalFeedback { id: string; from: string; category: string; text: string; at: string; assignmentId: string; }
+
+// Fiscal-year start month options (1=Jan … 12=Dec). Lets an admin structure the
+// year flexibly instead of a hardcoded April start.
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
 export default function GoalLifecyclePanel() {
   const { role, user } = useAuth();
@@ -74,6 +99,9 @@ export default function GoalLifecyclePanel() {
   const isAdmin = role === "admin";
 
   const [fy, setFy] = useState("FY26-27");
+  // Split the panel into tabs so goal setup/cascade and rating entry aren't one
+  // long page (meeting ask).
+  const [tab, setTab] = useState<"goals" | "ratings">("goals");
   const [framework, setFramework] = useState<Framework | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -82,7 +110,7 @@ export default function GoalLifecyclePanel() {
   const [people, setPeople] = useState<Person[]>([]);
 
   const [fwOpen, setFwOpen] = useState(false);
-  const [fwForm, setFwForm] = useState({ cadences: ["QUARTERLY", "ANNUAL"], team: 60 });
+  const [fwForm, setFwForm] = useState({ cadences: ["QUARTERLY", "ANNUAL"], team: 60, startMonth: 4, announce: true });
 
   const [goalOpen, setGoalOpen] = useState(false);
   const [goalForm, setGoalForm] = useState({
@@ -99,8 +127,22 @@ export default function GoalLifecyclePanel() {
   const [auditFor, setAuditFor] = useState<Assignment | null>(null);
   const [auditRows, setAuditRows] = useState<AuditRow[]>([]);
 
+  // Goal-scoped feedback (feedback tied to one in-progress goal), distinct
+  // from the general continuous feedback on the Feedback page.
+  const [feedbackFor, setFeedbackFor] = useState<Assignment | null>(null);
+  const [goalFeedback, setGoalFeedback] = useState<GoalFeedback[]>([]);
+  const [fbCategory, setFbCategory] = useState("MOTIVATION");
+  const [fbText, setFbText] = useState("");
+  const [fbLoading, setFbLoading] = useState(false);
+
   // Latest self/reviewer rating per assignment (pm-eval GET /evaluations/current).
   const [ratings, setRatings] = useState<Record<string, CurrentRating>>({});
+  // Per-assignment draft (rating + free-text comment) captured in the Ratings
+  // tab before Save — lets employee/manager add their view alongside the score.
+  const [ratingDraft, setRatingDraft] = useState<Record<string, { rating: string; comment: string }>>({});
+  const draftFor = (id: string) => ratingDraft[id] ?? { rating: "", comment: "" };
+  const setDraft = (id: string, patch: Partial<{ rating: string; comment: string }>) =>
+    setRatingDraft((prev) => ({ ...prev, [id]: { ...draftFor(id), ...patch } }));
 
   // Quarterly check-in notes (pm-eval) — free-text progress notes per
   // employee/period, separate from numeric ratings.
@@ -145,10 +187,10 @@ export default function GoalLifecyclePanel() {
     }
   };
 
-  const submitRating = async (a: Assignment, source: "self" | "reviewer", rating: number) => {
+  const submitRating = async (a: Assignment, source: "self" | "reviewer", rating: number, comment = "") => {
     const path = source === "self" ? "/evaluations/self" : "/evaluations/reviewer";
     try {
-      await pmEval.post(path, { assignmentId: a.id, employeeId: a.ownerId, rating });
+      await pmEval.post(path, { assignmentId: a.id, employeeId: a.ownerId, rating, comment });
       toast.success(`${source === "self" ? "Self" : "Reviewer"} rating saved (${rating.toFixed(1)})`);
       loadAll(fy);
     } catch (err) {
@@ -164,12 +206,16 @@ export default function GoalLifecyclePanel() {
 
   // ---- framework ----
   const saveFramework = async () => {
+    const firstOpen = !framework;
     try {
       await pmGoal.post("/framework", {
         fiscalYear: fy, activeCadences: fwForm.cadences,
         teamWeightPct: fwForm.team, individualWeightPct: 100 - fwForm.team,
+        startMonth: fwForm.startMonth, announce: fwForm.announce,
       });
-      toast.success("Framework saved");
+      const notified = firstOpen || fwForm.announce;
+      toast.success(firstOpen ? "Cycle opened" : "Framework saved",
+        notified ? { description: "Everyone was notified the cycle is open." } : undefined);
       setFwOpen(false);
       loadAll(fy);
     } catch (err) { toast.error("Could not save", { description: (err as Error).message }); }
@@ -246,6 +292,40 @@ export default function GoalLifecyclePanel() {
     catch { setAuditRows([]); }
   };
 
+  // ---- assignment detail pop-out helpers ----
+  const goalDescription = (goalId: string) => goals.find((g) => g.id === goalId)?.description || "";
+  // Sibling assignments derived from the same goal — for a team goal these are
+  // the individual owners whose ratings roll up as their contribution.
+  const siblingsOf = (a: Assignment) => assignments.filter((x) => x.goalId === a.goalId);
+
+  // ---- goal-scoped feedback (pm-eval, assignmentId set) ----
+  const loadGoalFeedback = async (a: Assignment) => {
+    setFbLoading(true);
+    try {
+      const res = await pmEval.get<{ list: GoalFeedback[] }>(
+        `/feedback?aboutEmployeeId=${encodeURIComponent(a.ownerId)}&assignmentId=${encodeURIComponent(a.id)}&pageSize=100`,
+      );
+      setGoalFeedback(res.list ?? []);
+    } catch { setGoalFeedback([]); }
+    finally { setFbLoading(false); }
+  };
+  const openFeedback = (a: Assignment) => {
+    setFeedbackFor(a); setFbText(""); setFbCategory("MOTIVATION"); setGoalFeedback([]);
+    loadGoalFeedback(a);
+  };
+  const submitGoalFeedback = async () => {
+    if (!feedbackFor || !fbText.trim()) { toast.error("Write some feedback first"); return; }
+    try {
+      await pmEval.post("/feedback", {
+        aboutEmployeeId: feedbackFor.ownerId, assignmentId: feedbackFor.id,
+        category: fbCategory, text: fbText.trim(), fiscalYear: fy,
+      });
+      toast.success("Feedback added to goal", { description: `${feedbackFor.ownerId} will be notified.` });
+      setFbText("");
+      loadGoalFeedback(feedbackFor);
+    } catch (err) { toast.error("Could not send", { description: (err as Error).message }); }
+  };
+
   // ---- quarterly check-in notes (pm-eval) ----
   const submitCheckinNote = async () => {
     if (!checkinEmployee || !checkinPeriodId || !checkinText.trim()) {
@@ -316,29 +396,59 @@ export default function GoalLifecyclePanel() {
   const sectionTotals: Record<string, number> = {};
   for (const g of goals) sectionTotals[g.pillar] = (sectionTotals[g.pillar] ?? 0) + g.defaultWeight;
 
+  // Assignments that can carry ratings (past the acceptance stage) — the
+  // Ratings tab works from this list.
+  const rateable = assignments.filter(
+    (a) => a.status !== "PENDING_ACCEPTANCE" && a.status !== "CHANGE_REQUESTED",
+  );
+
   return (
     <div className="space-y-4">
       {/* FY selector */}
       <div className="ff-card p-4 mb-4 flex flex-wrap items-center gap-3">
         <span className="text-[12px] font-medium text-gray-500">Fiscal year</span>
-        <Input value={fy} onChange={(e) => setFy(e.target.value)} className="w-32 h-8 text-[13px]" />
-        <Button size="sm" variant="outline" onClick={() => loadAll(fy)}>Load</Button>
+        <Select value={fy} onValueChange={(v) => { setFy(v); loadAll(v); }}>
+          <SelectTrigger className="w-32 h-8 text-[13px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {FISCAL_YEARS.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button size="sm" variant="outline" onClick={() => loadAll(fy)}>Reload</Button>
         <span className="ml-auto text-[11px] text-gray-400">
           Signed in as <b className="text-[#16203b]">{user.name}</b> · {role}
         </span>
       </div>
 
+      {/* Step-to-step flow + who-acts-when (meeting ask) */}
+      <GoalFlowGuide />
+
+      {/* Tabs: goal setup/cascade vs rating entry */}
+      <div className="flex gap-1 mb-4 bg-white border border-[#ebedf2] rounded-[8px] p-1 w-fit">
+        {([["goals", "Goals & Cascade", GitBranch], ["ratings", "Ratings & Reviews", Star]] as const).map(([k, lbl, Icon]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-[5px] text-[12.5px] font-medium transition-colors ${tab === k ? "bg-[#0052cc] text-white" : "text-gray-500 hover:text-[#16203b]"}`}>
+            <Icon size={13} /> {lbl}
+          </button>
+        ))}
+      </div>
+
       {/* 1. Framework */}
+      {tab === "goals" && (
       <div className="ff-card p-5 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2">
-            <Settings2 size={15} className="text-[#0052cc]" /> Performance Framework
-          </h3>
+          <div>
+            <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2">
+              <Settings2 size={15} className="text-[#0052cc]" /> Performance Framework
+            </h3>
+            <p className="text-[12px] text-gray-500 mt-0.5">Step 1 — the fiscal-year setup: cadences and the Team/Individual weight split. <b>Admin</b> configures it; review periods are derived automatically.</p>
+          </div>
           {isAdmin && (
             <Button size="sm" onClick={() => {
               setFwForm({
                 cadences: framework?.activeCadences ?? ["QUARTERLY", "ANNUAL"],
                 team: framework?.teamWeightPct ?? 60,
+                startMonth: framework?.startMonth ?? 4,
+                announce: !framework, // first open announces by default
               });
               setFwOpen(true);
             }} className="bg-[#0052cc] hover:bg-[#003d99]">
@@ -352,6 +462,11 @@ export default function GoalLifecyclePanel() {
               <span className="px-2 py-0.5 rounded-full bg-[#eef4fa] text-[#0052cc] font-medium">
                 Team {framework.teamWeightPct}% · Individual {framework.individualWeightPct}%
               </span>
+              {framework.fyWindow && (
+                <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600" title="Fiscal-year window">
+                  {framework.fyWindow}
+                </span>
+              )}
               {framework.activeCadences.map((c) => (
                 <span key={c} className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{c}</span>
               ))}
@@ -371,14 +486,18 @@ export default function GoalLifecyclePanel() {
           </p>
         )}
       </div>
+      )}
 
       {/* 2. Goal authoring (setters) */}
-      {isSetter && (
+      {isSetter && tab === "goals" && (
         <div className="ff-card p-5 mb-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2">
-              <Target size={15} className="text-[#0052cc]" /> Goal Authoring
-            </h3>
+            <div>
+              <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2">
+                <Target size={15} className="text-[#0052cc]" /> Goal Authoring
+              </h3>
+              <p className="text-[12px] text-gray-500 mt-0.5">Step 2 — <b>Manager/Admin</b> create goals per pillar with a measure, description and 1/3/5 rubric. Each pillar's weights must total 10 before cascade.</p>
+            </div>
             <Button size="sm" onClick={() => setGoalOpen(true)} className="bg-[#0052cc] hover:bg-[#003d99]">
               <Plus size={13} className="mr-1" /> New goal
             </Button>
@@ -423,17 +542,31 @@ export default function GoalLifecyclePanel() {
       )}
 
       {/* 3. Assignments + bilateral acceptance */}
+      {tab === "goals" && (
       <div className="ff-card p-5">
-        <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2 mb-3">
+        <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2 mb-1">
           <GitBranch size={15} className="text-[#0052cc]" /> Assignments &amp; Acceptance
         </h3>
+        <p className="text-[12px] text-gray-500 mb-3">Steps 3–6 — cascaded goals appear here. <b>Employee</b> and <b>Manager</b> both accept to make a goal Active, then rate it. Early completion needs manager approval.</p>
         {assignments.length === 0 ? (
           <p className="text-[12.5px] text-gray-400">No assignments yet. {isSetter ? "Cascade a goal to create them." : "Wait for your manager to cascade goals to you."}</p>
         ) : (
-          <div className="space-y-2">
-            {assignments.map((a) => {
-              const own = a.ownerId === user.name;
+          <div className="space-y-4">
+            {PILLARS.map((pl) => {
+              const pillarRows = assignments.filter((a) => a.pillar === pl.value);
+              if (!pillarRows.length) return null;
               return (
+                <div key={pl.value}>
+                  <p className="text-[12px] font-semibold text-[#16203b] mb-2 flex items-center gap-2">
+                    {pl.label}
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">{pillarRows.length}</span>
+                  </p>
+                  <div className="space-y-2">
+                    {pillarRows.map((a) => {
+                      const own = a.ownerId === user.name;
+                      const desc = goalDescription(a.goalId);
+                      const siblings = siblingsOf(a);
+                      return (
                 <div key={a.id} className="rounded-[9px] border border-[#eef0f4] p-3">
                   <div className="flex items-start gap-2 flex-wrap">
                     <div className="min-w-0 flex-1">
@@ -444,9 +577,15 @@ export default function GoalLifecyclePanel() {
                       </div>
                       <p className="text-[11px] text-gray-400 mt-1">
                         Owner <b className="text-[#16203b]">{a.ownerId}</b>{own && " (you)"} · {pillarLabel(a.pillar)} ·
-                        <span className={`ml-1 ${acceptColor(a.employeeAcceptance)}`}>self {a.employeeAcceptance}</span> ·
-                        <span className={`ml-1 ${acceptColor(a.managerAcceptance)}`}>mgr {a.managerAcceptance}</span>
+                        <span className={`ml-1 ${accColor(a.employeeAcceptance)}`}>self {a.employeeAcceptance}</span> ·
+                        <span className={`ml-1 ${accColor(a.managerAcceptance)}`}>mgr {a.managerAcceptance}</span>
                       </p>
+                      {desc && (
+                        <p className="text-[11px] text-gray-500 mt-1"><span className="text-gray-400">Description:</span> {desc}</p>
+                      )}
+                      {a.criteria && (
+                        <p className="text-[11px] text-gray-500 mt-1"><span className="text-gray-400">Measurement criteria:</span> {a.criteria}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {a.status !== "ACTIVE" && (own ? a.employeeAcceptance !== "ACCEPTED" : isSetter && a.managerAcceptance !== "ACCEPTED") && (
@@ -467,14 +606,12 @@ export default function GoalLifecyclePanel() {
                           <X size={11} /> Reject
                         </button>
                       )}
-                      {/* Early completion: owner requests on an ACTIVE goal */}
                       {own && a.status === "ACTIVE" && (
                         <button onClick={() => act(`/assignments/${a.id}/request-completion`, {}, "Completion requested")}
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-[5px] text-[11px] font-medium text-teal-700 border border-teal-300 hover:bg-teal-50">
                           <Check size={11} /> Mark done early
                         </button>
                       )}
-                      {/* Manager approves/rejects a pending completion request */}
                       {isSetter && a.status === "COMPLETION_REQUESTED" && (
                         <>
                           <button onClick={() => act(`/assignments/${a.id}/completion-decision`, { decision: "APPROVE" }, "Completion approved")}
@@ -487,53 +624,126 @@ export default function GoalLifecyclePanel() {
                           </button>
                         </>
                       )}
+                      {a.status !== "PENDING_ACCEPTANCE" && a.status !== "CHANGE_REQUESTED" && (
+                        <button onClick={() => openFeedback(a)} title="Feedback on this goal"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-[5px] text-[11px] font-medium text-[#0052cc] border border-[#0052cc]/30 hover:bg-[#e6eefa]">
+                          <MessageSquare size={11} /> Feedback
+                        </button>
+                      )}
                       <button onClick={() => openAudit(a)} title="Audit trail"
                         className="p-1 rounded hover:bg-[#eef0f4] text-gray-400"><History size={14} /></button>
                     </div>
                   </div>
 
-                  {/* Ratings — self (owner) and reviewer (manager) streams that
-                      roll up into the IPF scorecard. Editable only while ACTIVE. */}
-                  {a.status !== "PENDING_ACCEPTANCE" && a.status !== "CHANGE_REQUESTED" && (
-                    <div className="mt-2 pt-2 border-t border-[#f3f4f6] flex items-center gap-3 flex-wrap text-[12px]">
-                      <span className="text-gray-400">Ratings</span>
-                      <span>self <b className="text-[#16203b]">{ratings[a.id]?.self?.rating ?? "—"}</b></span>
-                      <span>mgr <b className="text-[#16203b]">{ratings[a.id]?.reviewer?.rating ?? "—"}</b></span>
-                      {a.status === "ACTIVE" && own && (
-                        <label className="flex items-center gap-1.5 ml-auto">
-                          <span className="text-gray-400">Set your rating</span>
-                          <select defaultValue="" onChange={(e) => { if (e.target.value) submitRating(a, "self", parseFloat(e.target.value)); }}
-                            className="h-7 rounded-[5px] border border-input bg-background text-[12px] px-1.5">
-                            <option value="" disabled>—</option>
-                            {RATING_OPTIONS.map((o) => <option key={o} value={o}>{o.toFixed(1)}</option>)}
-                          </select>
-                        </label>
-                      )}
-                      {a.status === "ACTIVE" && isSetter && !own && (
-                        <label className="flex items-center gap-1.5 ml-auto">
-                          <span className="text-gray-400">Set reviewer rating</span>
-                          <select defaultValue="" onChange={(e) => { if (e.target.value) submitRating(a, "reviewer", parseFloat(e.target.value)); }}
-                            className="h-7 rounded-[5px] border border-input bg-background text-[12px] px-1.5">
-                            <option value="" disabled>—</option>
-                            {RATING_OPTIONS.map((o) => <option key={o} value={o}>{o.toFixed(1)}</option>)}
-                          </select>
-                        </label>
-                      )}
+                  {/* Individual contributions to a team goal (inline) */}
+                  {a.pillar === "TEAM_GOAL" && siblings.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-[#f3f4f6]">
+                      <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-1 flex items-center gap-1.5">
+                        <Users size={11} className="text-[#0052cc]" /> Individual contributions
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {siblings.map((s) => (
+                          <span key={s.id} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-gray-50 border border-[#eef0f4] text-gray-600">
+                            {s.ownerId}{s.ownerId === user.name && " (you)"} · mgr <b className="text-[#16203b]">{ratings[s.id]?.reviewer?.rating ?? "—"}</b>
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
+
+                  <p className="text-[10.5px] text-gray-400 mt-2 pt-2 border-t border-[#f3f4f6]">
+                    Rate this goal &amp; add your view in the <b className="text-[#0052cc]">Ratings &amp; Reviews</b> tab once it's Active.
+                  </p>
+                </div>
+              );
+                    })}
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
       </div>
+      )}
 
-      {/* 4. Quarterly check-in notes + mid-year review (reviewers) */}
-      {isSetter && (
+      {/* Ratings tab: self (owner) + reviewer (manager) rating entry */}
+      {tab === "ratings" && (
+      <div className="ff-card p-5 mb-4">
+        <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2 mb-1">
+          <Star size={15} className="text-[#0052cc]" /> Ratings
+        </h3>
+        <p className="text-[12px] text-gray-500 mb-3">Step 5 — the <b>Employee</b> self-rates (reference) and the <b>Manager</b> sets the official rating. Editable while a goal is Active; these roll up into the IPF scorecard.</p>
+        {rateable.length === 0 ? (
+          <p className="text-[12.5px] text-gray-400">No goals to rate yet — goals become rateable once both sides accept them (see the Goals &amp; Cascade tab).</p>
+        ) : (
+          <div className="space-y-2">
+            {rateable.map((a) => {
+              const own = a.ownerId === user.name;
+              return (
+                <div key={a.id} className="rounded-[9px] border border-[#eef0f4] p-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[13px] font-medium text-[#16203b]">{a.measure}</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${STATUS_STYLE[a.status] ?? "bg-gray-100 text-gray-500"}`}>{a.status.replace("_", " ")}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">wt {a.weight}</span>
+                    <span className="text-[11px] text-gray-400 ml-auto">Owner <b className="text-[#16203b]">{a.ownerId}</b>{own && " (you)"}</span>
+                  </div>
+
+                  {/* Employee's view + Manager's view (rating + free-text) */}
+                  <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                    <div className="rounded-[7px] border border-[#eef0f4] px-2.5 py-1.5">
+                      <p className="text-[10px] text-gray-400">Employee's view · self <b className="text-[#16203b]">{ratings[a.id]?.self?.rating ?? "—"}</b></p>
+                      <p className="text-[12px] text-[#16203b] leading-snug mt-0.5">{ratings[a.id]?.self?.comment || <span className="text-gray-300">—</span>}</p>
+                    </div>
+                    <div className="rounded-[7px] border border-[#eef0f4] px-2.5 py-1.5">
+                      <p className="text-[10px] text-gray-400">Manager's view · mgr <b className="text-[#16203b]">{ratings[a.id]?.reviewer?.rating ?? "—"}</b></p>
+                      <p className="text-[12px] text-[#16203b] leading-snug mt-0.5">{ratings[a.id]?.reviewer?.comment || <span className="text-gray-300">—</span>}</p>
+                    </div>
+                  </div>
+
+                  {/* Editor for whichever stream the current user owns, while ACTIVE */}
+                  {a.status === "ACTIVE" && (own || (isSetter && !own)) && (() => {
+                    const source: "self" | "reviewer" = own ? "self" : "reviewer";
+                    const d = draftFor(a.id);
+                    return (
+                      <div className="mt-2 pt-2 border-t border-[#f3f4f6] space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-gray-400">{own ? "Your rating" : "Reviewer rating"}</span>
+                          <select value={d.rating} onChange={(e) => setDraft(a.id, { rating: e.target.value })}
+                            className="h-7 rounded-[5px] border border-input bg-background text-[12px] px-1.5">
+                            <option value="">—</option>
+                            {RATING_OPTIONS.map((o) => <option key={o} value={o}>{o.toFixed(1)}</option>)}
+                          </select>
+                        </div>
+                        <textarea rows={2} value={d.comment} onChange={(e) => setDraft(a.id, { comment: e.target.value.slice(0, 2000) })}
+                          placeholder={own ? "Your view on this goal (optional)" : "Manager's point of view (optional)"}
+                          className="w-full px-2.5 py-1.5 text-[12px] border border-input rounded-[4px] bg-background text-[#16203b] focus:outline-none focus:border-[#0052cc] resize-none" />
+                        <Button size="sm" className="bg-[#0052cc] hover:bg-[#003d99]"
+                          onClick={() => {
+                            const cur = ratings[a.id]?.[source]?.rating ?? null;
+                            const r = d.rating ? parseFloat(d.rating) : cur;
+                            if (r == null) { toast.error("Pick a rating first"); return; }
+                            submitRating(a, source, r, d.comment.trim());
+                          }}>
+                          Save rating &amp; comment
+                        </Button>
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* 4. Quarterly check-in notes + mid-year review (reviewers) — Ratings tab */}
+      {isSetter && tab === "ratings" && (
         <div className="ff-card p-5">
-          <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2 mb-3">
+          <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2 mb-1">
             <NotebookPen size={15} className="text-[#0052cc]" /> Check-in Notes &amp; Mid-Year Review
           </h3>
+          <p className="text-[12px] text-gray-500 mb-3">Step 5 support — <b>Manager</b> records quarterly progress notes and reviews the read-only mid-year (H1) summary.</p>
           <div className="grid sm:grid-cols-2 gap-4">
             {/* Check-in notes */}
             <div>
@@ -608,12 +818,13 @@ export default function GoalLifecyclePanel() {
         </div>
       )}
 
-      {/* 5. Goal sheet import / export (.xlsx) */}
-      {isSetter && (
+      {/* 5. Goal sheet import / export (.xlsx) — Goals tab */}
+      {isSetter && tab === "goals" && (
         <div className="ff-card p-5">
-          <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2 mb-3">
+          <h3 className="text-[14px] font-bold text-[#16203b] flex items-center gap-2 mb-1">
             <Upload size={15} className="text-[#0052cc]" /> Goal Sheet Import / Export
           </h3>
+          <p className="text-[12px] text-gray-500 mb-3">Optional — <b>Manager/Admin</b> bulk-load goals from the standard .xlsx template, or export an employee's goal sheet.</p>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <p className="text-[12px] font-semibold text-[#16203b]">Import ({fy})</p>
@@ -669,10 +880,28 @@ export default function GoalLifecyclePanel() {
                 <Input value={100 - fwForm.team} disabled />
               </div>
             </div>
+            <div className="space-y-1.5">
+              <Label>Fiscal year starts in</Label>
+              <Select value={String(fwForm.startMonth)} onValueChange={(v) => setFwForm({ ...fwForm, startMonth: parseInt(v, 10) })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-gray-400">Quarter windows are derived from this — e.g. an April start gives Q1 Apr–Jun.</p>
+            </div>
+            <label className="flex items-center gap-2 pt-1 cursor-pointer">
+              <input type="checkbox" checked={fwForm.announce}
+                onChange={(e) => setFwForm({ ...fwForm, announce: e.target.checked })}
+                className="accent-[#0052cc]" />
+              <span className="text-[12.5px] text-[#16203b]">Notify everyone the cycle is open</span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFwOpen(false)}>Cancel</Button>
-            <Button onClick={saveFramework} className="bg-[#0052cc] hover:bg-[#003d99]">Save</Button>
+            <Button onClick={saveFramework} className="bg-[#0052cc] hover:bg-[#003d99]">
+              {framework ? "Save" : "Open cycle"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -813,6 +1042,57 @@ export default function GoalLifecyclePanel() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Goal-scoped feedback dialog */}
+      <Dialog open={!!feedbackFor} onOpenChange={(o) => { if (!o) setFeedbackFor(null); }}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Feedback on this goal</DialogTitle>
+            <DialogDescription>
+              {feedbackFor?.measure} · for <b className="text-[#16203b]">{feedbackFor?.ownerId}</b>. Scoped to this goal — separate from general continuous feedback.
+            </DialogDescription>
+          </DialogHeader>
+          {/* Composer */}
+          <div className="space-y-2 py-1">
+            <div className="flex gap-2">
+              <Select value={fbCategory} onValueChange={setFbCategory}>
+                <SelectTrigger className="h-8 w-44 text-[12.5px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {FEEDBACK_CATEGORIES.map((c) => <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {fbCategory === "STRETCH" && <span className="self-center text-[10.5px] text-[#0f9d58]">raises 9-box potential</span>}
+            </div>
+            <textarea rows={2} value={fbText} onChange={(e) => setFbText(e.target.value.slice(0, 2000))}
+              placeholder="Specific, helpful feedback on this goal…"
+              className="w-full px-3 py-2 text-[12.5px] border border-input rounded-[4px] bg-background text-[#16203b] focus:outline-none focus:border-[#0052cc] resize-none" />
+            <div className="flex justify-end">
+              <Button size="sm" onClick={submitGoalFeedback} className="bg-[#0052cc] hover:bg-[#003d99]">
+                <MessageSquare size={12} className="mr-1.5" /> Add feedback
+              </Button>
+            </div>
+          </div>
+          {/* Existing goal feedback */}
+          <div className="space-y-1.5 py-1 max-h-64 overflow-y-auto border-t border-[#f3f4f6] pt-2">
+            {fbLoading ? (
+              <p className="text-[12px] text-gray-400">Loading…</p>
+            ) : goalFeedback.length === 0 ? (
+              <p className="text-[12px] text-gray-400">No feedback on this goal yet.</p>
+            ) : goalFeedback.map((f) => (
+              <div key={f.id} className="rounded-[8px] border border-[#eef0f4] px-3 py-2">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">
+                    {FEEDBACK_CATEGORIES.find((c) => c.key === f.category)?.label ?? f.category}
+                  </span>
+                  <span className="text-[10.5px] text-gray-400">{f.from} · {new Date(f.at).toLocaleDateString()}</span>
+                </div>
+                <p className="text-[12px] text-[#16203b] leading-snug">{f.text}</p>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

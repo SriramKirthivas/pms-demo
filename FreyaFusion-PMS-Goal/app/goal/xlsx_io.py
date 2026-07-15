@@ -19,6 +19,7 @@ import io
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
 
+from ..common import internal
 from ..common.auth import CurrentUser
 from ..common.envelope import PARAM_INVALID, ApiError
 from . import service
@@ -188,29 +189,54 @@ def export_workbook(db: Session, employee_id: str, fiscal_year: str) -> bytes:
         .all()
     )
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Goals"
-    header = ["measure", "description", "baseCriteria", "pillar", "cadence", "weight"]
-    ws.append(header)
-    for a in rows:
-        ws.append([a.measure, a.criteria, a.criteria, a.pillar, a.cadence, a.weight])
-
-    # Match the template's semantics more closely: description/baseCriteria
-    # come from the assignment's tweaked criteria only when present; goal
-    # metadata isn't duplicated onto GoalAssignment beyond `criteria`, so we
-    # populate description from the source Goal when available.
+    # Source Goal metadata (description / base criteria) for each assignment.
     goal_ids = {a.goal_id for a in rows}
     goals_by_id = {}
     if goal_ids:
         for g in db.query(Goal).filter(Goal.id.in_(goal_ids)).all():
             goals_by_id[g.id] = g
-    if goals_by_id:
-        for i, a in enumerate(rows, start=2):
-            g = goals_by_id.get(a.goal_id)
-            if g is not None:
-                ws.cell(row=i, column=2, value=g.description)
-                ws.cell(row=i, column=3, value=a.criteria or g.base_criteria)
+
+    # Latest self/reviewer ratings + comments from pm-eval, keyed by
+    # assignmentId. Best-effort — the sheet still exports (ratings blank) if
+    # pm-eval is unreachable.
+    ratings = internal.get_json(
+        "eval", "/api/pm-eval/system/evaluations/latest", {"employeeId": employee_id},
+    ) or {}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Goals"
+    # Granular per-goal row: who owns it, who reviews it, where it stands, and
+    # both sides' ratings + written views.
+    header = [
+        "Employee", "Manager", "Pillar", "Cadence", "Goal", "Description",
+        "Measurement Criteria", "Weight", "Status", "Employee Accepted",
+        "Manager Accepted", "Self Rating", "Employee's View",
+        "Manager Rating", "Manager's View",
+    ]
+    ws.append(header)
+    for a in rows:
+        g = goals_by_id.get(a.goal_id)
+        r = ratings.get(a.id) or {}
+        self_r = r.get("self") or {}
+        mgr_r = r.get("reviewer") or {}
+        ws.append([
+            a.owner_id,
+            a.reviewer_id,
+            a.pillar,
+            a.cadence,
+            a.measure,
+            g.description if g else "",
+            a.criteria or (g.base_criteria if g else ""),
+            a.weight,
+            a.assignment_status,
+            a.employee_acceptance,
+            a.manager_acceptance,
+            self_r.get("rating", ""),
+            self_r.get("comment", ""),
+            mgr_r.get("rating", ""),
+            mgr_r.get("comment", ""),
+        ])
 
     buf = io.BytesIO()
     wb.save(buf)

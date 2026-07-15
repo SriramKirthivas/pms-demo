@@ -98,6 +98,9 @@ class PerformanceFramework(URFMixin, Base):
     active_cadences: Mapped[list] = mapped_column(JSON, default=list)
     team_weight_pct: Mapped[int] = mapped_column(Integer, default=60)
     individual_weight_pct: Mapped[int] = mapped_column(Integer, default=40)
+    # First calendar month of the fiscal year (1=Jan … 12=Dec). Drives the
+    # derived quarter windows so the FY isn't hardcoded to Apr–Mar.
+    start_month: Mapped[int] = mapped_column(Integer, default=4)
 
 
 class ReviewPeriod(URFMixin, Base):

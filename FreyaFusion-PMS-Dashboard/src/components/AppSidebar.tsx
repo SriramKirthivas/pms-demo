@@ -14,6 +14,7 @@ import {
 import {
   LayoutDashboard,
   Users,
+  UsersRound,
   BarChart3,
   Settings,
   ChevronRight,
@@ -36,8 +37,12 @@ const navGroups = [
   {
     label: "Performance",
     items: [
+      { label: "Summary", icon: TrendingUp, path: "/summary" },
       { label: "Scorecard", icon: BarChart3, path: "/scorecard" },
       { label: "Goals & Cascade", icon: GitBranch, path: "/goals" },
+      // Manager/admin only (canAccess filters it out for employees) — a
+      // per-report team rollup, distinct from the flat Goals list.
+      { label: "My Team", icon: UsersRound, path: "/team" },
       // "Company Goals" hidden: its data lived on the retired ad-hoc backend
       // and no pm-* service owns that concept yet. Route still exists.
       { label: "Feedback", icon: MessageSquare, path: "/feedback" },

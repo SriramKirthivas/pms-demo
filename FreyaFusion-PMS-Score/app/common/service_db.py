@@ -19,29 +19,28 @@ def base_url() -> str:
     return url
 
 
+def _shared_db() -> bool:
+    """SHARED_DB=1 => all services use one managed DB (e.g. a single Render
+    Postgres). Table names don't collide across services, so no per-service DB
+    is created and DATABASE_URL is used verbatim."""
+    return os.getenv("SHARED_DB", "").lower() in ("1", "true", "yes")
+
+
 def service_url(db_name: str) -> str:
     base = base_url()
+    if _shared_db():
+        return base
     if base.startswith("sqlite"):
         if base.rstrip("/").endswith(".db"):
             return base.rsplit("/", 1)[0] + f"/{db_name}.db"
-        return base
-    if os.getenv("DB_AUTOCREATE", "1") != "1":
-        # Managed Postgres (Render/RDS): the provider generated the database
-        # name (it may not equal SERVICE_DB), so use exactly the DB named in
-        # DATABASE_URL rather than rewriting the last path segment.
         return base
     return base.rsplit("/", 1)[0] + f"/{db_name}"
 
 
 def ensure_database(db_name: str, retries: int = 12, delay: float = 2.0) -> None:
     base = base_url()
-    if base.startswith("sqlite"):
-        return
-    if os.getenv("DB_AUTOCREATE", "1") != "1":
-        # Managed Postgres (Render/RDS): the database already exists and the app
-        # user typically cannot CREATE DATABASE, nor connect to the "postgres"
-        # maintenance DB. Skip bootstrap; just use the DB named in DATABASE_URL.
-        return
+    if _shared_db() or base.startswith("sqlite"):
+        return  # managed/single DB (Render) or sqlite — nothing to create
     admin_url = base.rsplit("/", 1)[0] + "/postgres"
     last: Exception | None = None
     for attempt in range(1, retries + 1):

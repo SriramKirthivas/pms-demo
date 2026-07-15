@@ -8,12 +8,14 @@ EVENT_TYPES = {
     "SCORECARD_SIGNED_OFF",
     # Early-completion flow (owner requests, manager approves/rejects).
     "COMPLETION_REQUESTED", "COMPLETION_APPROVED", "COMPLETION_REJECTED",
+    # Admin opens the performance cycle — push-out notice to all participants.
+    "CYCLE_OPENED",
 }
 
 # Event types that additionally trigger an email (subject to per-user preference).
 EMAIL_ELIGIBLE_EVENTS = {
     "SCORECARD_PUBLISHED", "SCORECARD_SIGNED_OFF", "PERIOD_LOCKED",
-    "UNLOCK_REQUESTED", "UNLOCK_DECISION",
+    "UNLOCK_REQUESTED", "UNLOCK_DECISION", "CYCLE_OPENED",
 }
 
 

@@ -1,0 +1,57 @@
+trigger:
+  - main
+pool:
+  vmImage: ubuntu-latest
+strategy:
+  matrix:
+    Python312:
+      python.version: '3.12'
+
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '$(python.version)'
+      displayName: 'Use Python $(python.version)'
+  - script: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+    displayName: 'Install dependencies'
+  - script: |
+      export PYTHONPATH=$PYTHONPATH:$(Build.SourcesDirectory)
+      pip install pytest-cov pytest-azurepipelines pytest-asyncio
+      pytest ./tests/ -v --junitxml=junit/test-results.xml --cov=. --cov-report=xml
+    displayName: 'Run pytest'
+  - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFiles: '**/test-results.xml'
+      testRunTitle: 'Publish test results for Python $(python.version)'
+      publishRunAttachments: false
+
+  - task: PublishCodeCoverageResults@1
+    displayName: 'Publish Cobertura Coverage Report'
+    inputs:
+      codeCoverageTool: Cobertura
+      summaryFileLocation: '**/coverage.xml'
+#    failIfCoverageEmpty: true
+  - task: SonarQubePrepare@7
+    inputs:
+      SonarQube: 'Freyr-Unified-RIMS'
+      scannerMode: 'CLI'
+      configMode: 'manual'
+      cliProjectKey: 'Freyr-Unified-RIMS_FreyaFusion-PMS-Score_547d9a20-c997-4c0a-b048-50b04d355cd4'
+      cliProjectName: 'FreyaFusion-RMS-RMS-PMS-Score-Service'
+      cliSources: '.'
+      extraProperties: |
+        sonar.branch.name=$(Build.SourceBranchName)
+        sonar.coverage.exclusions=**/test_*.py
+        sonar.qualitygate.wait=true
+        sonar.python.coverage.reportPaths=**/*coverage*.xml
+        sonar.exclusions=**/tests/**
+  - task: SonarQubeAnalyze@7
+    inputs:
+      jdkversion: 'JAVA_HOME_17_X64'
+
+  - task: SonarQubePublish@7
+    inputs:
+      pollingTimeoutSec: '300'

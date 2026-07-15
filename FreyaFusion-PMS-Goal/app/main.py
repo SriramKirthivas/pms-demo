@@ -14,6 +14,11 @@ from fastapi.responses import JSONResponse
 # Owns the pm_goal database.
 os.environ.setdefault("SERVICE_DB", "pm_goal")
 
+# Load the APP_ENV profile (config/{APP_ENV}.yml) into the environment before
+# any config-reading modules import. No-op unless APP_ENV is set.
+from .common.config import load_config  # noqa: E402
+load_config()
+
 from .common import db as dbmod  # noqa: E402
 from .common.envelope import ApiError  # noqa: E402
 from .goal import models  # noqa: E402,F401  (register tables on Base before init)

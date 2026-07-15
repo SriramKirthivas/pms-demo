@@ -266,6 +266,24 @@ def finals(db: Session, employee_id: str) -> list[dict]:
     ]
 
 
+def latest_by_assignment(db: Session, employee_id: str) -> dict:
+    """Latest self/reviewer evaluation (rating + comment) per assignment for an
+    employee, keyed by assignmentId — powers the granular goal-sheet export."""
+    rows = (
+        db.query(Evaluation)
+        .filter_by(employee_id=employee_id, is_delete=False)
+        .order_by(Evaluation.evaluated_at)
+        .all()
+    )
+    out: dict[str, dict] = {}
+    for e in rows:
+        slot = out.setdefault(e.assignment_id, {"self": None, "reviewer": None})
+        slot["self" if e.source == "SELF" else "reviewer"] = {
+            "rating": float(e.rating), "comment": e.comment,
+        }
+    return out
+
+
 def history(db: Session, assignment_id: str, user: CurrentUser) -> list[Evaluation]:
     if not _can_view_assignment(assignment_id, user):
         raise ApiError(403, FORBIDDEN, "Not permitted to view this assignment's evaluations")
@@ -322,11 +340,22 @@ def log_feedback(db: Session, p: schemas.FeedbackCreate, user: CurrentUser) -> C
     f = ContinuousFeedback(
         about_employee_id=p.aboutEmployeeId, from_user=user.name,
         category=p.category, text=p.text.strip(), fiscal_year=p.fiscalYear,
+        assignment_id=(p.assignmentId or ""),
         create_user=user.name, tenant_id=user.tenant_id,
     )
     db.add(f)
     db.commit()
     db.refresh(f)
+    # Continuous feedback should actually reach its subject — notify them
+    # (best-effort; skip self-feedback). Makes the loop "continuous" rather
+    # than something you only discover by opening the Feedback page.
+    if f.about_employee_id and f.about_employee_id != user.name:
+        preview = f.text if len(f.text) <= 140 else f.text[:139] + "…"
+        internal.emit_event(
+            "FEEDBACK_RECEIVED", f.about_employee_id,
+            f"New feedback from {user.name}",
+            preview, "/feedback",
+        )
     return f
 
 
@@ -342,9 +371,15 @@ def list_feedback(db: Session, about=None, category=None, author=None) -> list[C
 
 
 def list_feedback_page(db: Session, about=None, category=None, author=None,
+                        assignment_id=None, scope=None,
                         page_num: int = 1, page_size: int = 20,
                         user: CurrentUser | None = None) -> tuple[list[ContinuousFeedback], int]:
-    """Gap #10: paginated feedback listing. Returns (page_rows, total)."""
+    """Gap #10: paginated feedback listing. Returns (page_rows, total).
+
+    assignment_id: restrict to feedback scoped to one goal assignment.
+    scope: "goal" = only goal-scoped (assignment_id set); "continuous" = only
+    general (assignment_id empty). Ignored when assignment_id is given.
+    """
     if about and user is not None and not _can_view_employee_data(about, user):
         raise ApiError(403, FORBIDDEN, "Not permitted to view feedback about this employee")
     q = db.query(ContinuousFeedback).filter_by(is_delete=False)
@@ -354,6 +389,12 @@ def list_feedback_page(db: Session, about=None, category=None, author=None,
         q = q.filter_by(category=category)
     if author:
         q = q.filter_by(from_user=author)
+    if assignment_id:
+        q = q.filter_by(assignment_id=assignment_id)
+    elif scope == "goal":
+        q = q.filter(ContinuousFeedback.assignment_id != "")
+    elif scope == "continuous":
+        q = q.filter(ContinuousFeedback.assignment_id == "")
     q = q.order_by(ContinuousFeedback.at.desc())
     total = q.count()
     page_num = max(1, page_num)
@@ -488,6 +529,7 @@ def feedback_out(f: ContinuousFeedback) -> dict:
     return {
         "id": f.id, "aboutEmployeeId": f.about_employee_id, "from": f.from_user,
         "category": f.category, "text": f.text, "fiscalYear": f.fiscal_year,
+        "assignmentId": f.assignment_id or "",
         "at": f.at.isoformat() + "Z",
     }
 

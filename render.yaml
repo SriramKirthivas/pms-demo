@@ -20,7 +20,11 @@ envVarGroups:
       - key: SECRET_KEY
         value: dev-secret
       # Managed Postgres already exists and the app user can't CREATE DATABASE;
-      # skip the bootstrap and just use the DB named in DATABASE_URL.
+      # skip the per-service DB bootstrap and use the DB named in DATABASE_URL
+      # verbatim. SHARED_DB is the flag the current code honors; DB_AUTOCREATE
+      # is kept for the older revision and is ignored by the current one.
+      - key: SHARED_DB
+        value: "1"
       - key: DB_AUTOCREATE
         value: "0"
       # Sibling service origins for best-effort cross-service calls (pm-eval

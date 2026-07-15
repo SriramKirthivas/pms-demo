@@ -10,6 +10,8 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Scorecard from "./pages/Scorecard";
 import Goals from "./pages/Goals";
+import Team from "./pages/Team";
+import Summary from "./pages/Summary";
 import CompanyGoals from "./pages/CompanyGoals";
 import FeedbackPage from "./pages/Feedback";
 import Talent from "./pages/Talent";
@@ -48,6 +50,8 @@ const App = () => (
             <Route path="/dashboard" element={<RoleGuard><Dashboard /></RoleGuard>} />
             <Route path="/scorecard" element={<RoleGuard><Scorecard /></RoleGuard>} />
             <Route path="/goals" element={<RoleGuard><Goals /></RoleGuard>} />
+            <Route path="/team" element={<RoleGuard><Team /></RoleGuard>} />
+            <Route path="/summary" element={<RoleGuard><Summary /></RoleGuard>} />
             <Route path="/company-goals" element={<RoleGuard><CompanyGoals /></RoleGuard>} />
             <Route path="/feedback" element={<RoleGuard><FeedbackPage /></RoleGuard>} />
             <Route path="/talent" element={<RoleGuard><Talent /></RoleGuard>} />

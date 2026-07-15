@@ -27,30 +27,49 @@ def _utcnow() -> datetime:
 SECTION_TOTAL = 10  # weights within a pillar section must total 10
 SETTER_ROLES = ("manager", "admin")
 
-# Quarter windows for an Apr–Mar fiscal year.
-QUARTERS = [
-    ("Q1", "Apr – Jun"),
-    ("Q2", "Jul – Sep"),
-    ("Q3", "Oct – Dec"),
-    ("Q4", "Jan – Mar"),
-]
-MONTHS = [
-    "Apr", "May", "Jun", "Jul", "Aug", "Sep",
-    "Oct", "Nov", "Dec", "Jan", "Feb", "Mar",
+# Calendar-month abbreviations, indexed 0=Jan … 11=Dec.
+MONTH_ABBR = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
 
 
-def _desired_periods(cadences: list[str]) -> list[tuple[str, str, str, str]]:
-    """(code, cadence, label, window) implied by the active cadences."""
+def _fy_month_order(start_month: int) -> list[int]:
+    """The 12 month indices (0-based) of the fiscal year, in order, starting
+    from start_month (1=Jan … 12=Dec)."""
+    s = (start_month - 1) % 12
+    return [(s + i) % 12 for i in range(12)]
+
+
+def _quarter_windows(start_month: int) -> list[tuple[str, str]]:
+    """(code, window) for the four quarters of a fiscal year that begins in
+    start_month — e.g. start_month=4 → Q1 'Apr – Jun' … Q4 'Jan – Mar'."""
+    order = _fy_month_order(start_month)
+    out: list[tuple[str, str]] = []
+    for q in range(4):
+        first, last = order[q * 3], order[q * 3 + 2]
+        out.append((f"Q{q + 1}", f"{MONTH_ABBR[first]} – {MONTH_ABBR[last]}"))
+    return out
+
+
+def _fy_window(start_month: int) -> str:
+    """Human label for the whole fiscal-year span, e.g. 'Apr – Mar'."""
+    order = _fy_month_order(start_month)
+    return f"{MONTH_ABBR[order[0]]} – {MONTH_ABBR[order[-1]]}"
+
+
+def _desired_periods(cadences: list[str], start_month: int = 4) -> list[tuple[str, str, str, str]]:
+    """(code, cadence, label, window) implied by the active cadences, with
+    windows derived from the fiscal-year start month."""
     out: list[tuple[str, str, str, str]] = []
     if "QUARTERLY" in cadences:
-        for code, window in QUARTERS:
+        for code, window in _quarter_windows(start_month):
             out.append((code, "QUARTERLY", f"{code} Review", window))
     if "ANNUAL" in cadences:
         out.append(("ANNUAL", "ANNUAL", "Annual Review", "Full Year"))
     if "MONTHLY" in cadences:
-        for i, m in enumerate(MONTHS, start=1):
-            out.append((f"M{i:02d}", "MONTHLY", m, m))
+        for i, mi in enumerate(_fy_month_order(start_month), start=1):
+            out.append((f"M{i:02d}", "MONTHLY", MONTH_ABBR[mi], MONTH_ABBR[mi]))
     # AD_HOC: no auto-derived periods.
     return out
 
@@ -101,18 +120,24 @@ def configure_framework(
     if p.teamWeightPct + p.individualWeightPct != 100:
         raise ApiError(400, PARAM_INVALID, "teamWeightPct + individualWeightPct must equal 100")
 
+    start_month = p.startMonth if 1 <= (p.startMonth or 0) <= 12 else 4
+
     fw = get_framework(db, p.fiscalYear)
+    is_new = fw is None
     if fw is None:
         fw = PerformanceFramework(fiscal_year=p.fiscalYear, create_user=user.name)
         db.add(fw)
     fw.active_cadences = p.activeCadences
     fw.team_weight_pct = p.teamWeightPct
     fw.individual_weight_pct = p.individualWeightPct
+    fw.start_month = start_month
     fw.update_user = user.name
     db.flush()  # assign fw.id
 
-    # Derive periods, leaving locked ones untouched (reconfigure rule).
-    desired = _desired_periods(p.activeCadences)
+    # Derive periods, leaving locked ones untouched (reconfigure rule). Existing
+    # unlocked periods have their label/window refreshed so a changed start
+    # month (or cadence) re-dates them.
+    desired = _desired_periods(p.activeCadences, start_month)
     desired_codes = {code for code, *_ in desired}
     existing = list_periods(db, p.fiscalYear)
     by_code = {e.code: e for e in existing}
@@ -120,15 +145,46 @@ def configure_framework(
         if e.code not in desired_codes and not e.locked:
             db.delete(e)
     for code, cadence, label, window in desired:
-        if code not in by_code:
+        cur = by_code.get(code)
+        if cur is None:
             db.add(ReviewPeriod(
                 framework_id=fw.id, fiscal_year=p.fiscalYear,
                 code=code, cadence=cadence, label=label, window=window,
                 create_user=user.name,
             ))
+        elif not cur.locked:
+            cur.label, cur.window = label, window
+            cur.update_user = user.name
     db.commit()
     db.refresh(fw)
+
+    # Push-out notice: on first open (or an explicit re-announce), tell every
+    # participant the cycle is open and what it looks like.
+    if is_new or p.announce:
+        _announce_cycle_open(db, fw, user)
     return fw
+
+
+def _announce_cycle_open(db: Session, fw: PerformanceFramework, user: CurrentUser) -> None:
+    """Fan out a CYCLE_OPENED notification to everyone in the directory when the
+    admin opens a performance cycle (best-effort, per-recipient)."""
+    periods = list_periods(db, fw.fiscal_year)
+    quarterly = [p.code for p in periods if p.cadence == "QUARTERLY"]
+    shape = (
+        f"Team {fw.team_weight_pct}% · Individual {fw.individual_weight_pct}% · "
+        f"{_fy_window(fw.start_month or 4)}"
+        + (f" · {len(quarterly)} quarterly reviews" if quarterly else "")
+    )
+    body = (
+        f"The {fw.fiscal_year} performance cycle is now open. {shape}. "
+        "Set and cascade goals to get started."
+    )
+    for e in directory_lookup(db, None):
+        internal.emit_event(
+            "CYCLE_OPENED", e.id,
+            f"{fw.fiscal_year} performance cycle is open",
+            body, "/goals",
+        )
 
 
 def period_out(p: ReviewPeriod) -> dict:
@@ -145,6 +201,8 @@ def framework_out(db: Session, fw: PerformanceFramework) -> dict:
         "activeCadences": fw.active_cadences,
         "teamWeightPct": fw.team_weight_pct,
         "individualWeightPct": fw.individual_weight_pct,
+        "startMonth": fw.start_month or 4,
+        "fyWindow": _fy_window(fw.start_month or 4),
         "periods": [period_out(p) for p in list_periods(db, fw.fiscal_year)],
     }
 
@@ -408,7 +466,9 @@ def cascade_goal(
             pillar=g.pillar, cadence=g.cadence, goal_type=g.goal_type,
             measure=g.measure, criteria=g.base_criteria, weight=g.default_weight,
             competencies=g.competencies, assignment_status="PENDING_ACCEPTANCE",
-            employee_acceptance="PENDING", manager_acceptance="PENDING",
+            # The manager cascading the goal implicitly accepts it — only the
+            # employee's acceptance is then needed to make it ACTIVE.
+            employee_acceptance="PENDING", manager_acceptance="ACCEPTED",
             create_user=user.name,
         )
         db.add(a)
@@ -419,6 +479,7 @@ def cascade_goal(
             db.add(Participation(assignment_id=a.id, employee_id=rid, role="REVIEWER"))
         _audit(db, a.id, user.name, "CREATED", f"Goal '{g.measure}' created for {emp}")
         _audit(db, a.id, user.name, "CASCADED", f"Cascaded to {emp}")
+        _audit(db, a.id, user.name, "ACCEPTED", "Manager auto-accepted on cascade")
         created.append(a)
 
     if created:

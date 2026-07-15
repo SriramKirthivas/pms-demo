@@ -16,6 +16,9 @@ class FeedbackCreate(BaseModel):
     category: str = "GENERAL"
     text: str
     fiscalYear: str = ""
+    # Optional: scope this feedback to a specific goal assignment (in-progress
+    # goal). Omit/empty for general continuous feedback.
+    assignmentId: str = ""
 
 
 class FinalizeRequest(BaseModel):

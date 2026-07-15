@@ -455,3 +455,63 @@ def test_feedback_view_scoped_to_self_manager_admin(client, monkeypatch):
     assert client.get("/api/pm-eval/feedback?aboutEmployeeId=David Chen", headers=auth(m)).status_code == 200
     assert client.get("/api/pm-eval/feedback?aboutEmployeeId=David Chen", headers=auth(a)).status_code == 200
     assert client.get("/api/pm-eval/feedback?aboutEmployeeId=David Chen", headers=auth(outsider)).status_code == 403
+
+
+# --------------------------------------------------------------------------
+# PMS v2: goal-scoped feedback, latest-evaluations export, comment round-trip
+# --------------------------------------------------------------------------
+
+def test_goal_scoped_vs_continuous_feedback(client):
+    """Feedback carries an optional assignmentId; the scope/assignmentId filters
+    keep goal-scoped feedback separate from general continuous feedback."""
+    m = token(*MANAGER)
+    # general (continuous) feedback — no assignmentId
+    client.post("/api/pm-eval/feedback",
+                json={"aboutEmployeeId": "David Chen", "category": "MOTIVATION",
+                      "text": "Great attitude", "fiscalYear": "FY26-27"},
+                headers=auth(m))
+    # goal-scoped feedback — tied to a specific assignment
+    r = client.post("/api/pm-eval/feedback",
+                    json={"aboutEmployeeId": "David Chen", "category": "STRETCH",
+                          "text": "Owned the rollout", "fiscalYear": "FY26-27",
+                          "assignmentId": "asg-9"},
+                    headers=auth(m))
+    assert r.status_code == 200 and r.json()["data"]["assignmentId"] == "asg-9"
+    # filter by assignmentId returns only the goal-scoped entry
+    goal = client.get("/api/pm-eval/feedback?aboutEmployeeId=David Chen&assignmentId=asg-9",
+                      headers=auth(m)).json()["data"]
+    assert goal["total"] == 1 and goal["list"][0]["assignmentId"] == "asg-9"
+    # scope=continuous excludes goal-scoped feedback
+    cont = client.get("/api/pm-eval/feedback?aboutEmployeeId=David Chen&scope=continuous",
+                      headers=auth(m)).json()["data"]
+    assert cont["total"] == 1 and cont["list"][0]["assignmentId"] == ""
+
+
+def test_latest_evaluations_by_assignment(client):
+    """GET /system/evaluations/latest returns the latest self/reviewer rating +
+    comment per assignment (powers the granular goal-sheet export)."""
+    e, m = token(*EMPLOYEE), token(*MANAGER)
+    client.post("/api/pm-eval/evaluations/self",
+                json={"assignmentId": "asg-1", "employeeId": "David Chen", "rating": 3.0, "comment": "first"}, headers=auth(e))
+    client.post("/api/pm-eval/evaluations/self",
+                json={"assignmentId": "asg-1", "employeeId": "David Chen", "rating": 4.5, "comment": "improved"}, headers=auth(e))
+    client.post("/api/pm-eval/evaluations/reviewer",
+                json={"assignmentId": "asg-1", "employeeId": "David Chen", "rating": 4.0, "comment": "solid"}, headers=auth(m))
+    latest = client.get("/api/pm-eval/system/evaluations/latest",
+                        params={"employeeId": "David Chen"}).json()["data"]
+    assert latest["asg-1"]["self"]["rating"] == 4.5      # latest self wins
+    assert latest["asg-1"]["self"]["comment"] == "improved"
+    assert latest["asg-1"]["reviewer"]["rating"] == 4.0
+    assert latest["asg-1"]["reviewer"]["comment"] == "solid"
+
+
+def test_evaluation_comment_round_trips(client):
+    """A rating's free-text comment is stored and returned by /evaluations/current
+    (the per-goal Employee's/Manager's view)."""
+    m = token(*MANAGER)
+    client.post("/api/pm-eval/evaluations/reviewer",
+                json={"assignmentId": "asg-1", "employeeId": "David Chen", "rating": 4.0,
+                      "comment": "Strong ownership on delivery"}, headers=auth(m))
+    cur = client.get("/api/pm-eval/evaluations/current?assignmentId=asg-1", headers=auth(m)).json()["data"]
+    assert cur["reviewer"]["rating"] == 4.0
+    assert cur["reviewer"]["comment"] == "Strong ownership on delivery"

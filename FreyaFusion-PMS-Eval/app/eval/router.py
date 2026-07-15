@@ -72,13 +72,16 @@ def log_feedback(
 def list_feedback(
     aboutEmployeeId: str,
     category: str | None = None,
+    assignmentId: str | None = None,
+    scope: str | None = None,  # "goal" | "continuous"
     pageNum: int = 1,
     pageSize: int = 20,
     db: Session = Depends(get_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     rows, total = service.list_feedback_page(
-        db, about=aboutEmployeeId, category=category, page_num=pageNum, page_size=pageSize, user=user,
+        db, about=aboutEmployeeId, category=category, assignment_id=assignmentId, scope=scope,
+        page_num=pageNum, page_size=pageSize, user=user,
     )
     return ok(page_envelope([service.feedback_out(f) for f in rows], total, pageNum, pageSize))
 
@@ -154,6 +157,15 @@ def final_evaluations(
     _: bool = Depends(require_internal),
 ) -> dict:
     return ok(service.finals(db, employeeId))
+
+
+@router.get("/system/evaluations/latest")
+def latest_evaluations(
+    employeeId: str,
+    db: Session = Depends(get_session),
+    _: bool = Depends(require_internal),
+) -> dict:
+    return ok(service.latest_by_assignment(db, employeeId))
 
 
 @router.get("/system/check-in-notes")

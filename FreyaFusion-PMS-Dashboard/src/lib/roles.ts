@@ -51,8 +51,10 @@ export const ROLE_ORDER: Role[] = ["employee", "manager", "admin"];
 // route guard (to block direct URL access).
 export const ROUTE_ACCESS: Record<string, Role[]> = {
   "/dashboard": ["employee", "manager", "admin"],
+  "/summary": ["employee", "manager", "admin"],
   "/scorecard": ["employee", "manager", "admin"],
   "/goals": ["employee", "manager", "admin"],
+  "/team": ["manager", "admin"],
   "/company-goals": ["employee", "manager", "admin"],
   "/feedback": ["employee", "manager", "admin"],
   "/talent": ["manager", "admin"],
